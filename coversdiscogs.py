@@ -2,11 +2,11 @@
 # [plugin]
 # name: Discogs covers
 # plugin_format: 0, 0
-# version: 0, 0, 1
+# version: 1, 0, 0
 # description: Fetch album covers from www.discogs.com
 # author: Jonathan Ballet
 # author_email: jon@multani.info
-# url: http://multani.info/projects/sonata/discogs-covers
+# url: https://github.com/multani/sonata-plugins
 # license: GPL v3 or later
 # [capabilities]
 # cover_fetching: on_cover_fetch
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 def make_user_agent():
-    return "Sonata/%s +http://sonata.berlios.de" % version
+    return "Sonata/%s +https://github.com/multani/sonata/" % version
 
 
 def on_cover_fetch(artist, album, on_save_cb, on_err_cb):
