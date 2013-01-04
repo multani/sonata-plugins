@@ -14,10 +14,8 @@
 
 import json
 import logging
-import shutil
 import urllib.request
 import urllib.parse
-import urllib.error
 
 from sonata.version import version
 
@@ -29,20 +27,7 @@ def make_user_agent():
     return "Sonata/%s +http://sonata.berlios.de" % version
 
 
-def on_cover_fetch(callback, artist, album, destination, all_images):
-    try:
-        result, headers = _cover_fetching(callback,
-                               artist, album,
-                               destination, all_images)
-    except urllib.error.URLError as e:
-        logger.info("Unable to fetch cover from Discogs: %s", e.reason)
-        return False
-
-    log_discogs_limits(headers)
-    return result
-
-def _cover_fetching(callback, artist, album, destination, all_images):
-
+def on_cover_fetch(artist, album, on_save_cb, on_err_cb):
     logger.debug("Looking for a cover for %r from %r", album, artist)
 
     opener = urllib.request.build_opener()
@@ -65,76 +50,21 @@ def _cover_fetching(callback, artist, album, destination, all_images):
         logger.info("Can't find a cover for %r from %r", album, artist)
         return
 
-    if all_images:
-        # We have a link to the master release, get the master to find the URL to
-        # the image.
-        found = False
-        headers = response.headers
-        masters = result["results"]
-        for master_nb, master in enumerate(masters):
-            master_url = master["resource_url"]
-            logger.debug("Opening master %r (%d/%d)",
-                        master_url, master_nb + 1, len(masters))
-            response = opener.open(master_url)
-            result = json.loads(response.read().decode('utf-8'))
-
-            headers = response.headers
-            for i, image in enumerate(result['images']):
-                dest = destination.replace("<imagenum>", "%d-%d" % (master_nb, i + 1))
-                image_url = image["resource_url"]
-
-                logger.debug("Downloading %r to %r (%d/%d)",
-                             image_url, dest, i + 1, len(result["images"]))
-                headers = download_resource_to(opener, image_url, dest)
-                found = True
-
-                if not callback(dest, i):
-                    return found, headers # cancelled
-
-        return found, headers
-    else:
-        # We have a link to the master release, get the master to find the URL to
-        # the image.
-        master_url = result["results"][0]["resource_url"]
-        logger.debug("Found %d master albums, opening %r",
-                     len(result["results"]),
-                    master_url)
-
-        logger.debug("Querying %r...", master_url)
+    masters = result["results"]
+    for master_nb, master in enumerate(masters):
+        master_url = master["resource_url"]
+        logger.debug("Opening master %r (%d/%d)",
+                    master_url, master_nb + 1, len(masters))
         response = opener.open(master_url)
-        result = json.loads(response.read().decode('utf-8'))
+        images = json.loads(response.read().decode('utf-8'))['images']
 
-        for image in result["images"]:
-            if image["type"] == "primary":
-                break
+        for i, image in enumerate(images, start=1):
+            image_url = image["resource_url"]
+            logger.debug("Downloading %r (%d/%d)", image_url, i, len(images))
+            content = opener.open(image_url)
 
-        # Now, get the image!
-        image_url = image["resource_url"]
-        logger.debug("Found %d images, downloading %r",
-                     len(result["images"]), image_url)
-        headers = download_resource_to(opener, image_url, destination)
-
-        return True, headers
-
-
-
-
-def download_resource_to(opener, url, destination):
-    try:
-        result = opener.open(url)
-    except HTTPError as e:
-        if e.code == 403:
-            # http://www.discogs.com/developers/accessing.html#rate-limiting
-            logger.info(
-                "Can't retrieve image %r from Discogs, it looks like you "
-                "requested too much images for today.", url)
-        else:
-            raise
-
-    with open(destination, "wb") as fp:
-        shutil.copyfileobj(result, fp)
-
-    return result.headers
+            if not on_save_cb(content):
+                return
 
 
 def log_discogs_limits(headers):
@@ -167,11 +97,24 @@ if __name__ == '__main__':
     import os
     import tempfile
     logging.basicConfig(level=logging.DEBUG)
-    fp, dest = tempfile.mkstemp()
-    os.close(fp)
 
-    result = on_cover_fetch(lambda *args, **kwargs:
-                            print("Call callback with (%r, %r)" % (
-                                args, kwargs)),
-                            "Metallica", "Ride the lightning", dest, False)
-    print(dest)
+    max = 50
+    current = 0
+
+    def on_save_cb(content):
+        global current
+
+        if current > max:
+            return False
+        current += 1
+
+        fp, dest = tempfile.mkstemp()
+        os.write(fp, content.read())
+        os.close(fp)
+        print(dest)
+        return True
+
+    def on_err_cb(reason):
+        print(reason)
+
+    on_cover_fetch("Metallica", "Ride the lightning", on_save_cb, on_err_cb)
